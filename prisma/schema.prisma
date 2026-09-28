@@ -1,0 +1,122 @@
+// Схема маркетплейса автозапчастей.
+// Ключевой принцип: товар определяется парой (бренд, нормализованный артикул).
+// Наименование товара НИКОГДА не участвует в сопоставлении — в реальных прайсах
+// одна и та же деталь называется по-разному даже внутри одного файла.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Shop {
+  id        Int         @id @default(autoincrement())
+  slug      String      @unique
+  name      String
+  city      String?
+  phone     String?
+  /// active | grace | suspended — при suspended предложения исчезают из выдачи,
+  /// но НЕ удаляются: магазин восстанавливается одним переключением статуса.
+  status    String      @default("active")
+  isDemo    Boolean     @default(false)
+  createdAt DateTime    @default(now())
+  offers    Offer[]
+  imports   ImportRun[]
+}
+
+model Brand {
+  id       Int          @id @default(autoincrement())
+  name     String
+  slug     String       @unique
+  /// oem | aftermarket — покупателю важно различать оригинал и заменитель
+  kind     String       @default("aftermarket")
+  aliases  BrandAlias[]
+  products Product[]
+}
+
+/// Справочник синонимов. Любой поиск бренда идёт только через него:
+/// "MERCEDES-BENZ", "Mercedes-Benz" и "Mercedes-benz" — три алиаса одного бренда.
+model BrandAlias {
+  id         Int    @id @default(autoincrement())
+  normalized String @unique
+  raw        String
+  /// seed | import | manual
+  source     String @default("import")
+  brandId    Int
+  brand      Brand  @relation(fields: [brandId], references: [id], onDelete: Cascade)
+}
+
+model Product {
+  id             Int     @id @default(autoincrement())
+  brandId        Int
+  brand          Brand   @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  articleNorm    String
+  articleDisplay String
+  name           String
+  /// Нижний регистр для поиска: SQLite не умеет регистронезависимый LIKE по кириллице
+  nameLower      String  @default("")
+  /// true, если артикул пришёл из числовой ячейки Excel — значит ведущие нули
+  /// могли быть потеряны безвозвратно и позиция требует ручной сверки
+  numericSource  Boolean @default(false)
+  offers         Offer[]
+
+  @@unique([brandId, articleNorm])
+  @@index([articleNorm])
+  @@index([nameLower])
+}
+
+model Offer {
+  id             Int      @id @default(autoincrement())
+  shopId         Int
+  shop           Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  productId      Int
+  product        Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Копейки, чтобы не ловить ошибки округления float
+  priceRetail    Int
+  priceWholesale Int?
+  quantity       Int      @default(0)
+  inStock        Boolean  @default(true)
+  /// Складские ячейки. Видны ТОЛЬКО магазину в кабинете, наружу не отдаются.
+  locations      String?
+  /// Из скольких строк прайса схлопнулось это предложение
+  sourceRows     Int      @default(1)
+  priceUpdatedAt DateTime @default(now())
+
+  @@unique([shopId, productId])
+  @@index([productId])
+}
+
+model ImportRun {
+  id              Int             @id @default(autoincrement())
+  shopId          Int
+  shop            Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  fileName        String
+  startedAt       DateTime        @default(now())
+  finishedAt      DateTime?
+  status          String          @default("running")
+  rowsTotal       Int             @default(0)
+  rowsEmpty       Int             @default(0)
+  rowsImported    Int             @default(0)
+  rowsMerged      Int             @default(0)
+  rowsQuarantined Int             @default(0)
+  newBrands       Int             @default(0)
+  quarantine      QuarantineRow[]
+}
+
+/// Строки, которые нельзя публиковать. Не выбрасываем — показываем магазину,
+/// чтобы он мог починить прайс, и себе, чтобы дополнять справочник брендов.
+model QuarantineRow {
+  id          Int       @id @default(autoincrement())
+  importRunId Int
+  importRun   ImportRun @relation(fields: [importRunId], references: [id], onDelete: Cascade)
+  rowNumber   Int
+  reason      String
+  rawArticle  String?
+  rawBrand    String?
+  rawName     String?
+  rawQty      String?
+  rawPrice    String?
+}
