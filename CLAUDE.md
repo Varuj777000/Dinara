@@ -143,6 +143,60 @@ Unbounded (заголовки), Geist Mono (артикулы).
   --wait-for-timeout 3500 <url> <файл>` (установленный Edge, без скачивания
   браузера). Headless-скриншоты самого Edge снимают кадр до ухода прелоадера.
 
+## Деплой на Vercel (демо-хостинг)
+
+Живая демо-ссылка: **https://dinara-delta.vercel.app** (проект `varuj/dinara`).
+База там — read-only копия `prisma/deploy.db`, реальный магазин «Тико»
+переключён в `Shop.status = "suspended"` (данные целы, просто не публикуются),
+видны только демо-магазины со случайными ценами. Это временный демо-хостинг,
+не прод: см. «Известные ограничения» про переезд на Postgres.
+
+Команда для повторного деплоя:
+```bash
+npx vercel deploy --yes --prod --project dinara \
+  -b DATABASE_URL=file:./prisma/deploy.db \
+  -e DATABASE_URL=file:./prisma/deploy.db \
+  -e SQLITE_READONLY=1
+```
+Перед этим обновить `prisma/deploy.db` копией `dev.db` и заново
+приостановить в ней немодемные магазины — иначе уйдут старые данные.
+
+Грабли, на которые уже наступили:
+
+- **Новый проект Vercel создался с `framework: null`.** Так вышло, потому что
+  проект был предварительно создан через `vercel project add` — это пропускает
+  автоопределение фреймворка. Без этого Vercel собирает сайт через
+  `@vercel/static-build` (как обычную статику) вместо билдера Next.js, и вообще
+  не создаёт serverless-функции — сайт становится сплошным 404, даже
+  `/icon.svg`. Чинится: `vercel api -X PATCH /v9/projects/dinara -F framework=nextjs`,
+  затем `vercel pull` (или новый `vercel deploy`, чтобы обновить локальный
+  кэш настроек в `.vercel/project.json`).
+- **Новый проект по умолчанию требует логин Vercel для просмотра любого
+  деплоя** (`ssoProtection`). Отключается через API:
+  `vercel api -X PATCH /v9/projects/dinara -F ssoProtection=null`.
+- **SQLite-файл не попадает в собранную функцию сам по себе.** Next.js
+  трассирует только файлы, до которых дотянулся через `import`/`require`; путь
+  из `DATABASE_URL` он не видит. Без явного указания — в рантайме ошибка
+  `Cannot open database because the directory does not exist`. Решение — в
+  `next.config.ts`: `outputFileTracingIncludes: { "/**": ["./prisma/*.db"] }`.
+- **На read-only файловой системе Vercel SQLite не может создать
+  journal-файл даже для SELECT.** Нужен явный `readonly: true` у адаптера —
+  включается переменной `SQLITE_READONLY=1` (см. `lib/db.ts`).
+- **Symlink-ошибка при локальном `vercel build` на Windows**
+  (`EPERM: operation not permitted, symlink ...`) — Windows без включённого
+  Developer Mode / прав администратора не даёт создавать symlink, которые
+  билдер Next.js использует для дедупликации функций. На это можно не
+  обращать внимания: деплой всё равно собирается удалённо на Linux-машине
+  Vercel через обычный `vercel deploy` (без `--prebuilt`).
+- **Next.js 16 по умолчанию собирает прод-билд через Turbopack**, и в момент
+  подключения этого проекта он не проходит этап «Collecting build traces» —
+  трассировка файлов для serverless-функций. Это не оказалось финальной
+  причиной проблемы (настоящая — framework: null, выше), но если трассировка
+  снова пропадёт из локального `next build`, форсировать Webpack можно
+  флагом `next build --webpack`.
+- Имя проекта Vercel обязано быть в нижнем регистре — «Dinara» (как называется
+  папка) не проходит валидацию, только «dinara».
+
 ## Известные ограничения текущего состояния
 
 - База — SQLite. Перед первым настоящим сторонним магазином нужен переезд на

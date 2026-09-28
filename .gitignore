@@ -44,6 +44,8 @@ next-env.d.ts
 .env
 prisma/dev.db
 prisma/dev.db-journal
+prisma/deploy.db
+prisma/deploy.db-journal
 
 # сгенерированный Prisma-клиент — восстанавливается через postinstall (prisma generate)
 /generated/
@@ -53,3 +55,5 @@ prisma/dev.db-journal
 
 # случайный лог из дев-сессии
 dev.log
+
+.vercel

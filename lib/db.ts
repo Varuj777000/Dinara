@@ -7,7 +7,10 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 function create() {
   const url = process.env.DATABASE_URL ?? "file:./prisma/dev.db";
-  return new PrismaClient({ adapter: new PrismaBetterSqlite3({ url }) });
+  // На read-only файловой системе (serverless-хостинг) SQLite не может
+  // создать journal-файл даже для SELECT — нужен явный readonly-режим.
+  const readonly = process.env.SQLITE_READONLY === "1";
+  return new PrismaClient({ adapter: new PrismaBetterSqlite3({ url, readonly }) });
 }
 
 export const prisma = globalForPrisma.prisma ?? create();
